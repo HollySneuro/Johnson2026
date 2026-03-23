@@ -1,0 +1,101 @@
+---
+title: "PCA_for_STRADLCog"
+author: "Holly Spence"
+date: "26/05/2021"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library("factoextra")
+library("tidyverse")
+library("gridExtra")
+library("Hmisc")
+library("corrplot")
+```
+
+Tidyverse package allow referral to all variables instead of using column names. 
+
+Create data frame just for cognition data
+```{r}
+pca_data<-data %>% select(c(ID, ImmediateRecall:MatrixReasoning_time))
+```
+
+Create correlation matrix of cog variables:
+```{r}
+corrnums<-pca_data %>% filter(complete.cases(.)) %>% select(-ID) %>% cor() #outputs correlation coefficients for those participants with no missing data
+corr_ps<-pca_data %>% filter(complete.cases(.)) %>% select(-ID) %>% as.matrix() %>% rcorr(type = "pearson") # outputs correlation p values using pearson correlations
+corr_ps
+```
+
+Represent this in a correlation plot:
+```{r}
+M<-corr_ps$r # uses correlation coefficient table to create new object M
+p_mat<- corr_ps$p # uses p values from rcorr command
+corrplot(M, type = "upper", method = "circle", order = "hclust", p.mat = p_mat, sig.level = 0.05, insig = "blank")
+```
+
+*Run the PCA*
+First create a table without missing values:
+```{r}
+pca_data<-pca_data %>% filter(complete.cases(.))
+pca_data<-tibble::rowid_to_column(pca_data, "row_num") #need this to create a data frame (tibble function does this) with row numbers so can then merge back to original data frame.
+```
+
+Use prcomp function to carry out initial PCA 
+```{r}
+pcacog<-prcomp(pca_data[,c(3:9)], center = TRUE, scale. = TRUE)
+#center argument centers the values around 0 and scale argument scales the variables to have unit variance before the analysis is started
+summary(pcacog)
+# Flip the first principal component loading
+pcacog$rotation[, 1] <- -pcacog$rotation[, 1]
+
+# If you also want to flip the scores accordingly
+pcacog$x[, 1] <- -pcacog$x[, 1]
+```
+Principal components 1-8 each explain a percentage of the variation in the dataset. e.g. PC1 explains 37.86% of total variance, PC2 explains 19.58% variation etc. 
+
+Assess this using the scree plot:
+```{r}
+fviz_eig(pcacog, addlabels = TRUE)#creates scree plot to look at eigen values
+```
+
+Summarise PCA using eigenvalues:
+```{r}
+loading_matrix<-loadings(pcacog)
+fviz_pca_var(pcacog, col.var = "contrib", #shows contribution to PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE, xlab = "Principal Component 1 (37.7%)", ylab = "Principal Component 2 (20.5%)")
+```
+
+Extract the principal components for each participant to give them a g (general cognition) value. 
+Essentially using principal component model to predict a g value for all participants using PC1 which explains the most variation of all the principal components.
+```{r}
+extractpca<-predict(pcacog, newdata = pca_data)
+head(extractpca)
+```
+
+Merge these PC scores into the data frame
+```{r}
+#create data frame of PC matrix
+extractpcaasdf<-as.data.frame(extractpca)
+extractpcaasdf<-rowid_to_column(extractpcaasdf , "row_num")
+#merge cog data and PC df using row num and STRADL ID as identifiers then remove PCs after PC1 
+masterpca<-left_join(pca_data, extractpcaasdf, by="row_num")
+master_data <- masterpca %>% select(-c(row_num, PC2:PC7))
+master_data <- master_data %>% rename(g=PC1)
+```
+
+Check that g correlates with individual factors more than they correlate with eachother - e.g.:
+```{r}
+corr_ps2 <-  master_data  %>% select(-ID) %>% as.matrix() %>%  rcorr(type = 'pearson')
+corr_ps2
+master_data %>% ggplot(aes(x=g,y=mema))+geom_point(alpha=.4)+theme_bw()
+master_data %>% ggplot(aes(x=g,y=digsym),)+geom_point(alpha=.4)+theme_bw()
+master_data %>% ggplot(aes(x=g,y=mrtottime),alpha=.4)+geom_point(alpha=.4)+theme_bw()
+master_data %>% ggplot(aes(x=mrtotc,y=digsym),alpha=.4)+geom_point(alpha=.4)+theme_bw()
+
+```
